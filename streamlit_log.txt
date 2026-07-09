@@ -1,7 +1,7 @@
 
 Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
 
-2026-07-09 15:56:26.036 Uvicorn server started on 0.0.0.0:8501
+2026-07-09 16:29:54.969 Uvicorn server started on 0.0.0.0:8501
 
   You can now view your Streamlit app in your browser.
 
@@ -9,5 +9,3 @@ Collecting usage statistics. To deactivate, set browser.gatherUsageStats to fals
   Network URL: http://192.168.168.43:8501
   External URL: http://115.93.127.99:8501
 
-C:\Users\user\Documents\유연희\수업 시간\project10(반려동물)\app.py:56: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
-  pixels = img.getdata()

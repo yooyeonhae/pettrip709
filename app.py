@@ -7,9 +7,11 @@
 import base64
 import math
 import os
+import re
 from io import BytesIO
 
 import pandas as pd
+import requests
 import streamlit as st
 from PIL import Image
 
@@ -155,8 +157,172 @@ NO_DATA_NOTICE = "정보 없음, 방문 전 재확인 권장"
 # API 키:
 # (키가 없으면 자동으로 mock 데이터로 동작한다)
 # ---------------------------------------------- ------------
-TOUR_API_KEY = ""   # 한국관광공사 TourAPI 4.0 서비스 키
+TOUR_API_KEY = "bcb9c56ce647784c28e44247f1ae7feabc585b174cc869951923a5b94932055a"   # 한국관광공사 TourAPI 4.0 서비스 키
 KAKAO_MAP_KEY = ""  # 카카오맵 JS SDK 키
+
+# ------------------------------------------------------------
+# 한국관광공사 TourAPI 4.0 연동 (원본 src/lib/api.js·constants.js·parseRule.js 포팅)
+# TOUR_API_KEY가 비어 있으면 자동으로 mock 데이터를 사용한다.
+# ------------------------------------------------------------
+TOUR_API_BASE = "https://apis.data.go.kr/B551011"
+KOR_SERVICE = {
+    "AREA_BASED_LIST": f"{TOUR_API_BASE}/KorService2/areaBasedList2",
+    "SEARCH_KEYWORD": f"{TOUR_API_BASE}/KorService2/searchKeyword2",
+}
+PET_TOUR_SERVICE = {
+    "DETAIL_PET_TOUR": f"{TOUR_API_BASE}/KorPetTourService/detailPetTour",
+}
+COMMON_PARAMS = {"MobileOS": "ETC", "MobileApp": "PetTrip", "_type": "json"}
+PET_FIELDS = {
+    "ALLOWED_ANIMALS": "acmpyPsblCpam",
+    "ACCOMPANY_TYPE": "acmpyTypeCd",
+    "NEED_MATTER": "acmpyNeedMtr",
+    "FURNISHED_ITEMS": "relaFrnshPrdlst",
+    "PURCHASE_ITEMS": "relaPurcPrdlst",
+    "RENTAL_ITEMS": "relaRntlPrdlst",
+    "ACCIDENT_RISK": "relaAcdntRiskMtr",
+    "EXTRA_FEE": "acmpyReqCst",
+}
+
+_SIZE_KEYWORDS = [("small", ["소형"]), ("medium", ["중형"]), ("large", ["대형"])]
+_ITEM_KEYWORDS = [
+    ("carrier", ["이동장", "켄넬", "가방"]),
+    ("leash", ["목줄", "리드줄"]),
+    ("muzzle", ["입마개"]),
+    ("wasteBag", ["배변봉투", "배변 봉투"]),
+]
+
+
+def _extract_weight(text):
+    m = re.search(r"(\d+(?:\.\d+)?)\s*kg\s*(이하|미만)", text)
+    return float(m.group(1)) if m else None
+
+
+def _extract_sizes(text):
+    return [size for size, words in _SIZE_KEYWORDS if any(w in text for w in words)]
+
+
+def _extract_items(text):
+    return [item for item, words in _ITEM_KEYWORDS if any(w in text for w in words)]
+
+
+def _extract_animals(text):
+    if "불가" in text and "견" not in text and "묘" not in text and "고양이" not in text:
+        return []
+    animals = []
+    if "견" in text or "강아지" in text or "개" in text:
+        animals.append("dog")
+    if "묘" in text or "고양이" in text:
+        animals.append("cat")
+    if "소동물" in text or "기타" in text:
+        animals.append("etc")
+    return animals
+
+
+def parse_rule_from_raw(raw_rule):
+    """KorPetTourService 원문 필드에서 판정 엔진용 구조화 규칙을 추출한다. 애매한 부분은 None/빈 배열로 남겨 '정보 없음' 처리한다."""
+    if not raw_rule:
+        return None
+    combined = " ".join(
+        filter(
+            None,
+            [
+                raw_rule.get("allowedAnimalsText"),
+                raw_rule.get("accompanyTypeText"),
+                raw_rule.get("needMatterText"),
+            ],
+        )
+    )
+    if not combined.strip():
+        return None
+    fully_banned = bool(re.search(r"동반\s*불가|출입\s*제한|입장\s*불가", combined))
+    return {
+        "allowedAnimals": [] if fully_banned else _extract_animals(combined),
+        "allowedSizes": [] if fully_banned else _extract_sizes(combined),
+        "maxWeight": 0 if fully_banned else _extract_weight(combined),
+        "requiredItems": [] if fully_banned else _extract_items(combined),
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_pet_tour_info(content_id, api_key):
+    """특정 장소(contentId)의 반려동물 동반 규정 상세 조회 (KorPetTourService.detailPetTour)."""
+    params = {**COMMON_PARAMS, "serviceKey": api_key, "contentId": content_id}
+    res = requests.get(PET_TOUR_SERVICE["DETAIL_PET_TOUR"], params=params, timeout=6)
+    res.raise_for_status()
+    data = res.json()
+    item = data.get("response", {}).get("body", {}).get("items", {}).get("item")
+    if isinstance(item, list):
+        item = item[0] if item else None
+    if not item:
+        return {}, None
+    raw_rule = {
+        "allowedAnimalsText": item.get(PET_FIELDS["ALLOWED_ANIMALS"]) or NO_DATA_NOTICE,
+        "accompanyTypeText": item.get(PET_FIELDS["ACCOMPANY_TYPE"]) or NO_DATA_NOTICE,
+        "needMatterText": item.get(PET_FIELDS["NEED_MATTER"]) or NO_DATA_NOTICE,
+        "furnishedItemsText": item.get(PET_FIELDS["FURNISHED_ITEMS"]) or NO_DATA_NOTICE,
+        "purchaseItemsText": item.get(PET_FIELDS["PURCHASE_ITEMS"]) or NO_DATA_NOTICE,
+        "rentalItemsText": item.get(PET_FIELDS["RENTAL_ITEMS"]) or NO_DATA_NOTICE,
+        "accidentRiskText": item.get(PET_FIELDS["ACCIDENT_RISK"]) or NO_DATA_NOTICE,
+        "extraFeeText": item.get(PET_FIELDS["EXTRA_FEE"]) or NO_DATA_NOTICE,
+    }
+    return raw_rule, parse_rule_from_raw(raw_rule)
+
+
+@st.cache_data(ttl=300, show_spinner="TourAPI에서 여행지를 불러오는 중...")
+def fetch_real_places(region, keyword, api_key):
+    """KorService2(지역/키워드 기반 장소 목록) + KorPetTourService(반려동물 규정) 연동 조회."""
+    endpoint = KOR_SERVICE["SEARCH_KEYWORD"] if keyword.strip() else KOR_SERVICE["AREA_BASED_LIST"]
+    params = {**COMMON_PARAMS, "serviceKey": api_key, "numOfRows": "30", "pageNo": "1", "arrange": "A"}
+    if region:
+        params["areaCode"] = region
+    if keyword.strip():
+        params["keyword"] = keyword.strip()
+
+    res = requests.get(endpoint, params=params, timeout=6)
+    res.raise_for_status()
+    data = res.json()
+    items = data.get("response", {}).get("body", {}).get("items", {}).get("item") or []
+    if isinstance(items, dict):
+        items = [items]
+
+    places = []
+    for item in items:
+        content_id = item.get("contentid")
+        raw_rule, parsed_rule = get_pet_tour_info(content_id, api_key)
+        area_code = item.get("areacode") or ""
+        places.append(
+            {
+                "id": content_id,
+                "name": item.get("title") or "이름 정보 없음",
+                "category": "attraction",
+                "region": area_code,
+                "region_name": REGION_NAME_BY_CODE.get(area_code, ""),
+                "address": item.get("addr1") or NO_DATA_NOTICE,
+                "lat": float(item.get("mapy") or 0),
+                "lng": float(item.get("mapx") or 0),
+                "image": item.get("firstimage") or "https://picsum.photos/seed/pettrip/600/400",
+                "raw_rule": raw_rule or {},
+                "parsed_rule": parsed_rule,
+            }
+        )
+    return places
+
+
+def get_places(region="", keyword=""):
+    """장소 목록 조회. TOUR_API_KEY가 있으면 실 API, 없거나 실패하면 mock 데이터를 사용한다. (use_mock 여부, 목록) 튜플 반환."""
+    if TOUR_API_KEY.strip():
+        try:
+            return fetch_real_places(region, keyword, TOUR_API_KEY), False
+        except Exception:
+            pass  # 실 API 실패 시 mock으로 대체
+
+    mock_list = [p for p in MOCK_PLACES if (not region or p["region"] == region)]
+    if keyword.strip():
+        kw = keyword.strip().lower()
+        mock_list = [p for p in mock_list if kw in p["name"].lower() or kw in p["address"].lower()]
+    return mock_list, True
+
 
 REGION_NAME_BY_CODE = {r["code"]: r["name"] for r in REGIONS}
 TYPE_LABEL_BY_VALUE = {t["value"]: t["label"] for t in PET_TYPES}
@@ -512,12 +678,13 @@ with tab_browse:
     with filter_cols[2]:
         keyword = st.text_input("검색어", placeholder="장소명 또는 주소로 검색")
 
-    filtered = [
-        p for p in MOCK_PLACES
-        if (not region_code or p["region"] == region_code)
-        and (not category_values or p["category"] in category_values)
-        and (not keyword.strip() or keyword.strip().lower() in p["name"].lower() or keyword.strip().lower() in p["address"].lower())
-    ]
+    places, used_mock = get_places(region=region_code, keyword=keyword)
+    filtered = [p for p in places if not category_values or p["category"] in category_values]
+
+    if used_mock:
+        st.caption("🔧 TOUR_API_KEY가 없어 mock 데이터로 동작 중이에요.")
+    else:
+        st.caption("🌐 한국관광공사 TourAPI 실시간 데이터를 불러왔어요.")
 
     st.write(f"총 **{len(filtered)}곳**의 여행지를 찾았어요.")
 
