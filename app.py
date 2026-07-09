@@ -146,10 +146,10 @@ JUDGE_META = {
 NO_DATA_NOTICE = "정보 없음, 방문 전 재확인 권장"
 
 # ------------------------------------------------------------
-# API 키: bcb9c56ce647784c28e44247f1ae7feabc585b174cc869951923a5b94932055a 
+# API 키: 
 # (키가 없으면 자동으로 mock 데이터로 동작한다)
 # ------------------------------------------------------------
-TOUR_API_KEY = ""   # 한국관광공사 TourAPI 4.0 서비스 키
+TOUR_API_KEY = "bcb9c56ce647784c28e44247f1ae7feabc585b174cc869951923a5b94932055a"   # 한국관광공사 TourAPI 4.0 서비스 키
 KAKAO_MAP_KEY = ""  # 카카오맵 JS SDK 키
 
 REGION_NAME_BY_CODE = {r["code"]: r["name"] for r in REGIONS}
