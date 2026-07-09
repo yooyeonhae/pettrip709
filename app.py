@@ -18,6 +18,12 @@ st.set_page_config(page_title="펫트립 - 반려동물 동반 여행 가이드"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+@st.cache_data
+def _image_base64(filename):
+    with open(os.path.join(APP_DIR, filename), "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
 def render_warm_theme():
     """앱 전체를 따뜻한 오렌지·크림 톤으로 물들이는 배경 CSS. 헤더/툴바도 투명하게 만들어 배경이 끊기지 않게 한다."""
     st.markdown(
@@ -146,10 +152,10 @@ JUDGE_META = {
 NO_DATA_NOTICE = "정보 없음, 방문 전 재확인 권장"
 
 # ------------------------------------------------------------
-# API 키: 
+# API 키:
 # (키가 없으면 자동으로 mock 데이터로 동작한다)
-# ------------------------------------------------------------
-TOUR_API_KEY = "bcb9c56ce647784c28e44247f1ae7feabc585b174cc869951923a5b94932055a"   # 한국관광공사 TourAPI 4.0 서비스 키
+# ---------------------------------------------- ------------
+TOUR_API_KEY = ""   # 한국관광공사 TourAPI 4.0 서비스 키
 KAKAO_MAP_KEY = ""  # 카카오맵 JS SDK 키
 
 REGION_NAME_BY_CODE = {r["code"]: r["name"] for r in REGIONS}
